@@ -1,0 +1,155 @@
+plugins {
+    id 'base'
+    id 'c'
+    id 'maven-publish'
+
+    id 'org.ajoberstar.grgit' version '1.7.1'
+    id 'org.ajoberstar.release-base' version '1.7.1'
+    id 'org.ajoberstar.release-opinion' version '1.7.1'
+}
+
+println "nexus repo is: ${project.'nexus.repo'}"
+
+import org.gradle.internal.os.OperatingSystem
+
+ext {
+    getCurOS = {
+        return OperatingSystem.current().isWindows() ? 'windows' : 'linux'
+    }
+    curOS = getCurOS()
+}
+
+def getOSArtifactName(name) {
+    def osPref = OperatingSystem.current().isWindows() ? '' : 'lib'
+    def osSuf = OperatingSystem.current().isWindows() ? 'windows' : 'linux'
+    return "${osPref}${name}-${osSuf}"
+}
+
+model {
+    buildTypes {
+        release
+    }
+
+    toolChains {
+        visualCpp(VisualCpp) {
+            // if omitted - the latest version of MSVC will be used
+            if (project.findProperty('vs.base') == null) {
+                println "vs.base is not set"
+            } else {
+                println "vs.base: ${project.'vs.base'}"
+                installDir "${project.'vs.base'}"
+            }
+        }
+        gcc(Gcc)
+    }
+
+    platforms {
+        x64 {
+            architecture "x86_64"
+        }
+    }
+
+    binaries {
+        withType(SharedLibraryBinarySpec) { // all
+            // cppCompiler.define "NDEBUG"
+            // Define toolchain-specific compiler and linker options
+            if (toolChain in Gcc) {
+                println 'toolchain is Gcc!'
+            }
+            if (toolChain in VisualCpp) {
+                // #if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+                //cCompiler.define "__STDC_VERSION__=199901L"
+                //cCompiler.define "YY_NO_UNISTD_H"
+                //cCompiler.define "DLL_BLD"
+                println 'toolchain is VisualCpp!'
+            }
+        }
+    }
+
+    components {
+ 	clbfoma(NativeLibrarySpec) { // SharedLibraryBinarySpec
+            targetPlatform 'x64'
+            sources {
+                c {
+                    source {
+                        srcDirs 'src/main/c/lib'
+                        include "**/*.c"
+                    }
+                    //exportedHeaders {
+                    //    srcDirs 'src/main/c/smallrt'
+                    //}
+                }
+            }
+        }
+ 	s1(NativeExecutableSpec) { // SharedLibraryBinarySpec
+            targetPlatform 'x64'
+            sources {
+                c {
+                    source {
+                        srcDirs 'src/main/c/s1'
+                        include '*.c'
+                    }
+                    //lib library: "smallrt"
+                }
+            }
+        }
+        all {
+            binaries.withType(StaticLibraryBinarySpec) {
+                buildable = false
+            }
+            binaries.withType(SharedLibraryBinarySpec) {
+                // println it.properties it.tasks
+                //println it.component.baseName + ' -> ' + it.sharedLibraryFile
+                project.repositories.moduleshared.dir(it.sharedLibraryFile.parentFile) // println '-> ' + project.repositories.cld2shared.dirs
+                project.publishing.publications.clbfoma.artifact([source: it.sharedLibraryFile]) // , extension: 'dll'
+                //println '-> ' + project.publishing.publications.cld2.properties
+                //println '-> ' + project.properties
+            }
+        }
+    }
+}
+
+//FOMAOBJS = foma.o stack.o iface.o lex.interface.o
+//LIBOBJS = int_stack.o define.o determinize.o
+//apply.o // called from iface.c
+//lexcread.o topsort.o flags.o minimize.o reverse.o extract.o sigma.o io.o structures.o constructions.o coaccessible.o utf8.o spelling.o dynarray.o mem.o stringhash.o trie.o
+//lex.lexc.o lex.yy.o lex.cmatrix.o regex.o
+
+//not needed: 'rewrite.c'
+
+repositories {
+    flatDir {
+        name "moduleshared"
+    }
+}
+
+publishing {
+    publications {
+        clbfoma(MavenPublication) {
+            groupId 'clarabridge'
+            artifactId getOSArtifactName(name) // project.publishing.publications.cld2.name, by default - projectName
+            //version version // project.version, semver
+        }
+    }
+    repositories {
+        maven {
+            // change to point to your repo, e.g. http://my.org/repo
+            url project.'nexus.repo' //"$buildDir/repo"
+            credentials {
+                username = project.'nexus.deploy.user'
+                password = project.'nexus.deploy.password'
+            }
+        }
+    }
+}
+
+task dumpVersion() {
+    doLast {
+        println "dump version is: ${project.version}"
+    }
+}
+
+publish.dependsOn build, dumpVersion
+
+// To make a 1.0.0 release, execute the following:
+// $ gradle release -Prelease.stage=final -Prelease.scope=major
